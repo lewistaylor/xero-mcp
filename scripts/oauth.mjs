@@ -31,22 +31,28 @@ import { resolve } from "node:path";
 const AUTHORIZE_URL = "https://login.xero.com/identity/connect/authorize";
 const TOKEN_URL = "https://identity.xero.com/connect/token";
 
-const SCOPES = (process.env.XERO_SCOPES || [
-  "openid",
-  "offline_access",
-  "accounting.invoices",
-  "accounting.invoices.read",
-  "accounting.payments",
-  "accounting.payments.read",
-  "accounting.banktransactions",
-  "accounting.banktransactions.read",
-  "accounting.manualjournals",
-  "accounting.manualjournals.read",
-  "accounting.contacts",
-  "accounting.contacts.read",
-  "accounting.settings",
-  "accounting.settings.read",
-].join(" "));
+const SCOPES =
+  process.env.XERO_SCOPES ||
+  [
+    "openid",
+    "profile",
+    "email",
+    "offline_access",
+    "accounting.invoices",
+    "accounting.invoices.read",
+    "accounting.payments",
+    "accounting.payments.read",
+    "accounting.banktransactions",
+    "accounting.banktransactions.read",
+    "accounting.manualjournals",
+    "accounting.manualjournals.read",
+    "accounting.contacts",
+    "accounting.settings",
+    "accounting.reports.balancesheet.read",
+    "accounting.reports.profitandloss.read",
+    "accounting.reports.trialbalance.read",
+    "accounting.reports.executivesummary.read",
+  ].join(" ");
 
 // ── Parse args ──────────────────────────────────────────────────────────────
 
@@ -102,7 +108,6 @@ const authorizeParams = new URLSearchParams({
 // Xero rejects `+` encoded spaces in scope — use %20 instead
 const authorizeUrl = `${AUTHORIZE_URL}?${authorizeParams.toString().replace(/scope=[^&]+/, `scope=${encodeURIComponent(SCOPES)}`)}`;
 
-
 // ── Start callback server ───────────────────────────────────────────────────
 
 const server = createServer(async (req, res) => {
@@ -151,9 +156,7 @@ const server = createServer(async (req, res) => {
     console.log(`  Refresh token saved to ${envPath}`);
     console.log(`  Access token expires in ${tokens.expires_in}s\n`);
     console.log("Start the container:");
-    console.log(
-      "  docker compose -f docker-compose.local.yml up --build -d\n",
-    );
+    console.log("  docker compose -f docker-compose.local.yml up --build -d\n");
 
     shutdown(0);
   } catch (err) {

@@ -1,26 +1,30 @@
 #!/usr/bin/env node
 
 /**
- * Supervisor for the Xero MCP server that keeps the access token alive.
+ * Supervisor for the Xero MCP server that keeps the access token alive
+ * and optionally protects the endpoint with bearer token auth.
  *
  * Xero access tokens expire after ~30 minutes. When running the OAuth2
  * auth-code flow (Option 1), this supervisor:
  *
  *   1. Exchanges the refresh token for a fresh access token on startup.
- *   2. Spawns supergateway with that token.
+ *   2. Spawns supergateway with that token on an internal port.
  *   3. Proactively refreshes the token every REFRESH_INTERVAL_MS (~25 min).
  *   4. Gracefully restarts supergateway with the new token so the
  *      downstream @xeroapi/xero-mcp-server picks it up.
  *
+ * When MCP_BEARER_TOKEN is set, an auth-checking reverse proxy sits on
+ * the public PORT and forwards authenticated requests to supergateway
+ * on an internal port. The health endpoint (/) bypasses auth so Railway
+ * health checks continue to work.
+ *
  * Xero uses rotating refresh tokens — each exchange returns a new one.
  * The supervisor tracks the latest refresh token in memory so successive
  * refreshes keep working for the lifetime of the container.
- *
- * For Custom Connections (Option 2) or manual bearer tokens (Option 3),
- * no refresh is needed and supergateway runs directly via exec.
  */
 
 import { spawn } from "node:child_process";
+import { createServer, request as httpRequest } from "node:http";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -30,6 +34,9 @@ const MCP_BEARER_TOKEN = process.env.MCP_BEARER_TOKEN || "";
 const XERO_CLIENT_ID = process.env.XERO_CLIENT_ID || "";
 const XERO_CLIENT_SECRET = process.env.XERO_CLIENT_SECRET || "";
 const TOKEN_URL = "https://identity.xero.com/connect/token";
+
+const INTERNAL_PORT = "9000";
+const PUBLIC_PORT = PORT;
 
 /** Refresh 5 minutes before the 30-minute expiry window. */
 const REFRESH_INTERVAL_MS = 25 * 60 * 1000;
@@ -89,22 +96,21 @@ let shuttingDown = false;
 
 /**
  * Builds the argument list for the supergateway CLI.
+ * Supergateway always listens on INTERNAL_PORT; the auth proxy (if enabled)
+ * listens on PUBLIC_PORT and forwards after checking the bearer token.
  */
 function buildArgs() {
-  const args = [
+  const listenPort = MCP_BEARER_TOKEN ? INTERNAL_PORT : PUBLIC_PORT;
+  return [
     "--stdio",
     "npx -y @xeroapi/xero-mcp-server",
     "--port",
-    PORT,
+    listenPort,
     "--outputTransport",
     MCP_TRANSPORT,
     "--healthEndpoint",
     "/",
   ];
-  if (MCP_BEARER_TOKEN) {
-    args.push("--header", `Authorization: Bearer ${MCP_BEARER_TOKEN}`);
-  }
-  return args;
 }
 
 /**
@@ -186,7 +192,75 @@ function shutdown(signal) {
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 
-// ── Main ────────────────────────────────────────────────────────────────────
+// ── Auth proxy ───────────────────────────────────────────────────────────────
+
+/**
+ * Starts a reverse proxy on PUBLIC_PORT that validates the bearer token
+ * and forwards to supergateway on INTERNAL_PORT. The health endpoint (/)
+ * bypasses auth so Railway health checks keep working.
+ */
+function startAuthProxy() {
+  const proxy = createServer((clientReq, clientRes) => {
+    const isHealthCheck =
+      clientReq.method === "GET" && clientReq.url === "/";
+
+    if (!isHealthCheck) {
+      const authHeader = clientReq.headers["authorization"] || "";
+      const expected = `Bearer ${MCP_BEARER_TOKEN}`;
+      if (authHeader !== expected) {
+        clientRes.writeHead(401, { "Content-Type": "application/json" });
+        clientRes.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: { code: -32001, message: "Unauthorized" },
+            id: null,
+          }),
+        );
+        return;
+      }
+    }
+
+    const proxyReq = httpRequest(
+      {
+        hostname: "127.0.0.1",
+        port: INTERNAL_PORT,
+        path: clientReq.url,
+        method: clientReq.method,
+        headers: clientReq.headers,
+      },
+      (proxyRes) => {
+        clientRes.writeHead(proxyRes.statusCode, proxyRes.headers);
+        proxyRes.pipe(clientRes, { end: true });
+      },
+    );
+
+    proxyReq.on("error", (err) => {
+      console.error(`[auth-proxy] Upstream error: ${err.message}`);
+      if (!clientRes.headersSent) {
+        clientRes.writeHead(502, { "Content-Type": "application/json" });
+        clientRes.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: { code: -32000, message: "Bad gateway" },
+            id: null,
+          }),
+        );
+      }
+    });
+
+    clientReq.pipe(proxyReq, { end: true });
+  });
+
+  proxy.listen(PUBLIC_PORT, () => {
+    console.log(
+      `[auth-proxy] Listening on port ${PUBLIC_PORT}, forwarding to ${INTERNAL_PORT}`,
+    );
+  });
+
+  return proxy;
+}
+
+// ── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
   let accessToken = process.env.XERO_CLIENT_BEARER_TOKEN || "";
@@ -216,9 +290,19 @@ async function main() {
     }, REFRESH_INTERVAL_MS);
   }
 
-  console.log(
-    `[supervisor] Starting Xero MCP server on port ${PORT} (transport: ${MCP_TRANSPORT})`,
-  );
+  if (MCP_BEARER_TOKEN) {
+    startAuthProxy();
+    console.log(
+      `[supervisor] Starting Xero MCP server on internal port ${INTERNAL_PORT} (transport: ${MCP_TRANSPORT})`,
+    );
+  } else {
+    console.log(
+      `[supervisor] WARNING: MCP_BEARER_TOKEN not set — endpoint is unprotected!`,
+    );
+    console.log(
+      `[supervisor] Starting Xero MCP server on port ${PUBLIC_PORT} (transport: ${MCP_TRANSPORT})`,
+    );
+  }
   startGateway(accessToken);
 }
 
