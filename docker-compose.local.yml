@@ -1,0 +1,20 @@
+# Run the Xero MCP server locally behind supergateway.
+# No router or auth — direct access for local dev / Cursor / Claude.
+#
+# Usage:
+#   cp .env.example .env   # fill in your credentials
+#   docker compose -f docker-compose.local.yml up --build -d
+#   curl http://localhost:8090/              # health check → "ok"
+#   docker compose -f docker-compose.local.yml logs -f xero-mcp
+
+services:
+  xero-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8090:8000"
+    env_file:
+      - .env
+    environment:
+      PORT: "8000"

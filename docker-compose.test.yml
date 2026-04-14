@@ -1,0 +1,21 @@
+# Test stack — builds the image and exposes it on port 8091.
+# Uses dummy Xero credentials; the server will start but Xero API calls will fail.
+# Good enough to verify the image builds, supergateway starts, and health checks pass.
+#
+# Usage:
+#   docker compose -f docker-compose.test.yml up --build -d
+#   sleep 5
+#   ./test/smoke.sh
+#   docker compose -f docker-compose.test.yml down
+
+services:
+  xero-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8091:8000"
+    environment:
+      PORT: "8000"
+      XERO_CLIENT_ID: "test-client-id"
+      XERO_CLIENT_SECRET: "test-client-secret"

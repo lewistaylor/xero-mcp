@@ -1,0 +1,19 @@
+# ── Xero MCP service config ──────────────────────────────────────────────────
+#
+# Deploy as "xero-mcp" on Railway. Uses the custom Dockerfile that
+# pre-installs @xeroapi/xero-mcp-server and supergateway at build time.
+#
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  IMPORTANT: Do NOT add a public domain to this service!               │
+# │  It must only be reachable via Railway private networking.            │
+# │  The mcp-gateway router handles public access and authentication.    │
+# └─────────────────────────────────────────────────────────────────────────┘
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
