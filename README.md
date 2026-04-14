@@ -32,8 +32,13 @@ Three auth modes — pick one:
 ### Option 1: OAuth2 Authorization Code (free, recommended)
 
 Standard OAuth2 flow via the browser. A helper script handles the redirect,
-gets a **refresh token** (valid 60 days), and saves it to `.env`. The container
-uses the refresh token to get a fresh access token on every startup.
+gets a **refresh token** (valid 60 days), and saves it to `.env`.
+
+A Node.js supervisor (`entrypoint.mjs`) exchanges the refresh token for a
+fresh access token on startup **and proactively re-refreshes every 25 minutes**
+so the token never expires during a long-running session. Xero uses rotating
+refresh tokens, so the supervisor tracks the latest one in memory across
+successive refreshes.
 
 1. Go to [Xero Developer → My Apps](https://developer.xero.com/app/manage/)
    and create a **Web App**.
@@ -47,8 +52,7 @@ node scripts/oauth.mjs
 
 Your browser opens, you log in to Xero and authorize the app, and the script
 writes `XERO_REFRESH_TOKEN` into `.env`. That's it — start the container and
-the entrypoint exchanges the refresh token for a fresh access token
-automatically.
+the supervisor keeps the access token alive automatically.
 
 To re-authorize (e.g. after 60 days or to switch orgs), just run
 `node scripts/oauth.mjs` again.
@@ -170,7 +174,10 @@ docker compose -f docker-compose.test.yml down
 ```
 xero-mcp/
 ├── Dockerfile                  # Pre-installs @xeroapi/xero-mcp-server + supergateway
-├── entrypoint.sh               # Token refresh + launches supergateway
+├── entrypoint.sh               # Shell entrypoint: delegates to supervisor or exec supergateway
+├── entrypoint.mjs              # Node.js supervisor: token refresh loop + child process mgmt
+├── entrypoint.test.mjs         # Tests for the supervisor
+├── package.json                # Dev dependencies (vitest)
 ├── railway.toml                # Railway deployment config
 ├── docker-compose.local.yml    # Local dev stack
 ├── docker-compose.test.yml     # Test stack (dummy creds)

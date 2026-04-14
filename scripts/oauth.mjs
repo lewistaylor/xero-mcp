@@ -23,7 +23,7 @@
  */
 
 import { createServer } from "node:http";
-import { randomBytes, createHash } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { resolve } from "node:path";
@@ -31,16 +31,22 @@ import { resolve } from "node:path";
 const AUTHORIZE_URL = "https://login.xero.com/identity/connect/authorize";
 const TOKEN_URL = "https://identity.xero.com/connect/token";
 
-const SCOPES = [
+const SCOPES = (process.env.XERO_SCOPES || [
   "openid",
-  "profile",
-  "email",
   "offline_access",
-  "accounting.transactions",
+  "accounting.invoices",
+  "accounting.invoices.read",
+  "accounting.payments",
+  "accounting.payments.read",
+  "accounting.banktransactions",
+  "accounting.banktransactions.read",
+  "accounting.manualjournals",
+  "accounting.manualjournals.read",
   "accounting.contacts",
+  "accounting.contacts.read",
   "accounting.settings",
-  "accounting.reports.read",
-].join(" ");
+  "accounting.settings.read",
+].join(" "));
 
 // ── Parse args ──────────────────────────────────────────────────────────────
 
@@ -81,20 +87,6 @@ if (!clientId || !clientSecret) {
   process.exit(1);
 }
 
-// ── PKCE ────────────────────────────────────────────────────────────────────
-
-function base64url(buffer) {
-  return buffer
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
-
-const codeVerifier = base64url(randomBytes(32));
-const codeChallenge = base64url(
-  createHash("sha256").update(codeVerifier).digest(),
-);
 const state = randomBytes(16).toString("hex");
 
 // ── Build authorize URL ─────────────────────────────────────────────────────
@@ -105,11 +97,11 @@ const authorizeParams = new URLSearchParams({
   redirect_uri: REDIRECT_URI,
   scope: SCOPES,
   state,
-  code_challenge: codeChallenge,
-  code_challenge_method: "S256",
 });
 
-const authorizeUrl = `${AUTHORIZE_URL}?${authorizeParams}`;
+// Xero rejects `+` encoded spaces in scope — use %20 instead
+const authorizeUrl = `${AUTHORIZE_URL}?${authorizeParams.toString().replace(/scope=[^&]+/, `scope=${encodeURIComponent(SCOPES)}`)}`;
+
 
 // ── Start callback server ───────────────────────────────────────────────────
 
@@ -191,7 +183,6 @@ async function exchangeCode(code) {
     code,
     redirect_uri: REDIRECT_URI,
     client_id: clientId,
-    code_verifier: codeVerifier,
   });
 
   const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString(

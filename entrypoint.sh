@@ -8,33 +8,18 @@ XERO_REFRESH_TOKEN="${XERO_REFRESH_TOKEN:-}"
 XERO_CLIENT_ID="${XERO_CLIENT_ID:-}"
 XERO_CLIENT_SECRET="${XERO_CLIENT_SECRET:-}"
 
-# ── Token refresh ────────────────────────────────────────────────────────────
-# If a refresh token is provided (from the OAuth2 auth-code flow), exchange it
-# for a fresh access token on every startup. This avoids needing Custom
-# Connections (paid) or manually rotating 30-min access tokens.
+# ── Refresh-token path → Node.js supervisor ──────────────────────────────────
+# Xero access tokens expire after ~30 minutes. When a refresh token is
+# available, delegate to the Node.js supervisor which keeps the token alive
+# by proactively refreshing it every ~25 minutes and restarting supergateway.
 
 if [[ -n "$XERO_REFRESH_TOKEN" && -n "$XERO_CLIENT_ID" && -n "$XERO_CLIENT_SECRET" ]]; then
-  echo "==> Refreshing Xero access token..."
-
-  credentials=$(printf '%s:%s' "$XERO_CLIENT_ID" "$XERO_CLIENT_SECRET" | base64 -w0 2>/dev/null || printf '%s:%s' "$XERO_CLIENT_ID" "$XERO_CLIENT_SECRET" | base64)
-
-  token_response=$(curl -sf -X POST "https://identity.xero.com/connect/token" \
-    -H "Content-Type: application/x-www-form-urlencoded" \
-    -H "Authorization: Basic ${credentials}" \
-    -d "grant_type=refresh_token&refresh_token=${XERO_REFRESH_TOKEN}")
-
-  access_token=$(echo "$token_response" | node -e "
-    let d=''; process.stdin.on('data',c=>d+=c); process.stdin.on('end',()=>{
-      const t=JSON.parse(d);
-      if(t.error){console.error('Token error:',t.error,t.error_description||'');process.exit(1)}
-      process.stdout.write(t.access_token);
-    })")
-
-  export XERO_CLIENT_BEARER_TOKEN="$access_token"
-  echo "==> Access token refreshed successfully"
+  exec node /app/entrypoint.mjs
 fi
 
-# ── Launch supergateway ──────────────────────────────────────────────────────
+# ── Static-token / Custom Connection path ────────────────────────────────────
+# No refresh token — launch supergateway directly (access token or
+# client-credentials grant handled by @xeroapi/xero-mcp-server itself).
 
 args=(
   --stdio "npx -y @xeroapi/xero-mcp-server"

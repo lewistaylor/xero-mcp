@@ -8,7 +8,7 @@ RUN npm install -g supergateway @xeroapi/xero-mcp-server
 
 WORKDIR /app
 
-COPY entrypoint.sh /app/entrypoint.sh
+COPY entrypoint.sh entrypoint.mjs /app/
 RUN chmod +x /app/entrypoint.sh
 
 USER node
