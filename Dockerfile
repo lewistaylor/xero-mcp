@@ -10,8 +10,8 @@ WORKDIR /app
 
 COPY entrypoint.sh entrypoint.mjs /app/
 RUN chmod +x /app/entrypoint.sh
+RUN mkdir -p /app/data && chown -R node:node /app/data
 
-USER node
 EXPOSE 8000
 
 ENTRYPOINT ["/app/entrypoint.sh"]

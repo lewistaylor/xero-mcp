@@ -21,6 +21,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -29,11 +30,42 @@ const MCP_TRANSPORT = process.env.MCP_TRANSPORT || "streamableHttp";
 const XERO_CLIENT_ID = process.env.XERO_CLIENT_ID || "";
 const XERO_CLIENT_SECRET = process.env.XERO_CLIENT_SECRET || "";
 const TOKEN_URL = "https://identity.xero.com/connect/token";
+const TOKEN_FILE = "/app/data/refresh_token";
 
 /** Refresh 5 minutes before the 30-minute expiry window. */
 const REFRESH_INTERVAL_MS = 25 * 60 * 1000;
 
-let refreshToken = process.env.XERO_REFRESH_TOKEN || "";
+/**
+ * Loads the most recent refresh token. Prefers the persisted file on the
+ * volume (survives redeployments) and falls back to the env var (first boot).
+ */
+function loadRefreshToken() {
+  try {
+    const persisted = readFileSync(TOKEN_FILE, "utf-8").trim();
+    if (persisted) {
+      console.log("[supervisor] Loaded persisted refresh token from volume");
+      return persisted;
+    }
+  } catch {
+    // File doesn't exist yet — first boot
+  }
+  return process.env.XERO_REFRESH_TOKEN || "";
+}
+
+/**
+ * Writes the latest refresh token to the volume so it survives container
+ * restarts and redeployments.
+ */
+function persistRefreshToken(token) {
+  try {
+    mkdirSync("/app/data", { recursive: true });
+    writeFileSync(TOKEN_FILE, token, "utf-8");
+  } catch (err) {
+    console.error(`[supervisor] Failed to persist refresh token: ${err.message}`);
+  }
+}
+
+let refreshToken = loadRefreshToken();
 const canRefresh = !!(refreshToken && XERO_CLIENT_ID && XERO_CLIENT_SECRET);
 
 // ── Token refresh ───────────────────────────────────────────────────────────
@@ -73,6 +105,7 @@ async function refreshAccessToken() {
 
   if (data.refresh_token) {
     refreshToken = data.refresh_token;
+    persistRefreshToken(refreshToken);
   }
 
   return data.access_token;
@@ -222,6 +255,8 @@ export {
   buildArgs,
   startGateway,
   stopGateway,
+  loadRefreshToken,
+  persistRefreshToken,
   REFRESH_INTERVAL_MS,
 };
 
